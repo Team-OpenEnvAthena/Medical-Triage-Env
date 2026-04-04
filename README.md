@@ -21,6 +21,7 @@ The environment includes three progressive tasks of increasing difficulty:
   - Exact match: **1.0** (e.g., correct answer is 2, agent assigns 2)
   - One level off: **0.5** (e.g., correct answer is 2, agent assigns 1 or 3)
   - Two levels off: **0.0** (e.g., correct answer is 1, agent assigns 3 - calling a critical patient "non-urgent")
+
 ### Task 2: Investigation Ordering (Medium)
 **Goal:** Select appropriate diagnostic tests while avoiding over-testing.
 
@@ -72,12 +73,12 @@ Each case includes:
 
 ### Installation
 ```bash
-# Install the environment
-pip install git+https://huggingface.co/spaces/ishakhatana17/medical-triage-env
+# Clone the environment
+git clone https://huggingface.co/spaces/ishakhatana17/medical-triage-env
+cd medical-triage-env
 
-# OR install from local directory
-cd medical_triage_env
-pip install -e .
+# Install dependencies
+pip install -r server/requirements.txt
 ```
 
 ### Basic Usage
@@ -87,7 +88,7 @@ from client import MedicalTriageEnv
 from models import TriageAction
 
 async def main():
-    async with MedicalTriageEnv(base_url="http://localhost:8000") as env:
+    async with MedicalTriageEnv(base_url="https://ishakhatana17-medical-triage-env.hf.space") as env:
         # Reset environment
         result = await env.reset()
         print(result.observation.task_instruction)
@@ -103,7 +104,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Running the Server
+### Running the Server Locally
 ```bash
 # Start the FastAPI server
 uvicorn server.app:app --host 0.0.0.0 --port 8000
@@ -116,13 +117,32 @@ docker run -p 8000:8000 medical-triage:latest
 ### Running Inference
 ```bash
 # Set environment variables
-export API_BASE_URL="https://api.openai.com/v1"
-export MODEL_NAME="gpt-4"
+export API_BASE_URL="https://router.huggingface.co/v1"
+export MODEL_NAME="Qwen/Qwen2.5-Coder-32B-Instruct"
 export HF_TOKEN="your_token_here"
 
 # Run baseline inference
 python inference.py
 ```
+
+## 📈 Baseline Performance
+
+Running `inference.py` with Qwen/Qwen2.5-Coder-32B-Instruct achieves:
+
+| Task | Score Range | Description |
+|------|------------|-------------|
+| Easy | 0.0 - 1.0 | Varies based on random patient selection |
+| Medium | 0.0 - 0.8 | LLM orders appropriate tests for different patient presentations |
+| Hard | 0.0 - 0.4 | Multi-component scoring with safety penalties |
+
+**Sample run:**
+```
+Easy:   0.500
+Medium: 0.757  
+Hard:   0.300
+```
+
+The score variance demonstrates that graders respond dynamically to different inputs and agent decisions.
 
 ## 📝 Action & Observation Spaces
 
@@ -147,7 +167,7 @@ class TriageAction(Action):
 ### TriageObservation
 ```python
 class TriageObservation(Observation):
-    current_patient: Optional[PatientCase]
+    current_patient: Optional[dict]
     available_investigations: List[str]
     investigation_results: Optional[Dict[str, Any]]
     task_instruction: str
@@ -168,7 +188,6 @@ The environment provides deterministic grading for all tasks:
 - `GET /state` - Get current state
 - `GET /tasks` - List available tasks
 - `GET /grader?task_id={id}` - Get task score
-- `POST /baseline` - Run inference script
 
 ## 🏗️ Architecture
 ```
@@ -218,7 +237,7 @@ The synthetic patient cases are fictional and designed for educational/research 
 
 ## 📄 License
 
-BSD-style license (see LICENSE file)
+MIT License
 
 ## 🙏 Acknowledgments
 
