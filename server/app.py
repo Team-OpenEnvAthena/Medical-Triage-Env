@@ -4,19 +4,15 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from openenv.core.env_server import create_app
-from openenv.core.env_server import create_web_interface_app   # built-in web UI
+os.environ.setdefault("ENABLE_WEB_INTERFACE", "true")
+
+from openenv.core.env_server import create_web_interface_app
 from models import TriageAction, TriageObservation
 from server.environment import MedicalTriageEnvironment
 
-# Always enable web interface (required for HF Spaces App tab)
-os.environ.setdefault("ENABLE_WEB_INTERFACE", "true")
-
-env_instance = MedicalTriageEnvironment()
-
-# create_web_interface_app mounts the web UI at /web AND all API endpoints
+# Pass the CLASS, not an instance
 app = create_web_interface_app(
-    env_instance,
+    MedicalTriageEnvironment,   # <-- class, not MedicalTriageEnvironment()
     TriageAction,
     TriageObservation,
 )
@@ -24,7 +20,6 @@ app = create_web_interface_app(
 
 @app.get("/tasks")
 def list_tasks():
-    """List available tasks and their action schemas."""
     return {
         "tasks": ["easy", "medium", "hard"],
         "task_descriptions": {
@@ -33,13 +28,13 @@ def list_tasks():
             "hard":   "Full Discharge Decision — diagnosis, disposition, meds, follow-up.",
         },
         "action_schema": {
-            "task_type":               "string: easy | medium | hard",
-            "urgency_assignment":      "int 1-3 (easy only)",
-            "ordered_investigations":  "list[str] (medium only; pass [] to finish)",
-            "diagnosis":               "str (hard only)",
-            "disposition":             "str: admit | discharge (hard only)",
-            "prescribed_medications":  "list[str] (hard only)",
-            "follow_up_days":          "int (hard only)",
+            "task_type":              "string: easy | medium | hard",
+            "urgency_assignment":     "int 1-3 (easy only)",
+            "ordered_investigations": "list[str] (medium only; pass [] to finish)",
+            "diagnosis":              "str (hard only)",
+            "disposition":            "str: admit | discharge (hard only)",
+            "prescribed_medications": "list[str] (hard only)",
+            "follow_up_days":         "int (hard only)",
         },
     }
 
