@@ -6,7 +6,7 @@ colorTo: blue
 sdk: docker
 pinned: false
 app_port: 7860
-base_path: /web
+base_path: /
 tags:
   - openenv
 ---
@@ -113,24 +113,37 @@ Step 3 (done):
 
 ---
 
-### Task 3 — Hard: Full Discharge Decision
+### Task 3 — Hard: Full Clinical Workup + Discharge (multi-step)
 
-Provide a complete clinical plan in one step.
+The hard task has **two phases** played in sequence within one episode:
 
-| Field | What to put |
-|---|---|
-| `task_type` | `hard` |
-| `diagnosis` | Plain text diagnosis string |
-| `disposition` | `"admit"` or `"discharge"` |
-| `prescribed_medications` | List of medication names |
-| `follow_up_days` | Number of days until follow-up |
+**Phase 1 — Investigation** (`task_type: "hard_investigate"`): order tests to gather evidence.
+**Phase 2 — Discharge** (`task_type: "hard_discharge"`): make the final clinical decision using the test results.
 
-**⚠️ Safety rule:** Never set `disposition: "discharge"` if the patient has SpO2 < 90% or BP < 90/60.
+Total max reward = 0.3 (investigation quality) + 0.7 (discharge quality) = **1.0**
 
-**Example — chest pain patient:**
+---
+
+#### Phase 1 — Order tests
+
+```json
+{"task_type": "hard_investigate", "ordered_investigations": ["ecg", "troponin", "cbc"]}
+```
+
+Send **`[]`** when you have enough evidence to decide:
+```json
+{"task_type": "hard_investigate", "ordered_investigations": []}
+```
+
+This transitions the episode to Phase 2. Test results are revealed in the observation after each step.
+
+---
+
+#### Phase 2 — Discharge decision
+
 ```json
 {
-  "task_type": "hard",
+  "task_type": "hard_discharge",
   "diagnosis": "acute myocardial infarction",
   "disposition": "admit",
   "prescribed_medications": ["aspirin", "nitroglycerin", "heparin"],
@@ -138,23 +151,13 @@ Provide a complete clinical plan in one step.
 }
 ```
 
-**Example — sore throat patient:**
-```json
-{
-  "task_type": "hard",
-  "diagnosis": "viral pharyngitis",
-  "disposition": "discharge",
-  "prescribed_medications": ["paracetamol", "lozenges"],
-  "follow_up_days": 5
-}
-```
+**⚠️ Safety rule:** Never set `disposition: "discharge"` if SpO2 < 90% or BP < 90/60. Penalty: **−0.5**.
 
-**Reward breakdown:**
-- Diagnosis accuracy: **0.3** (fuzzy keyword match)
-- Correct disposition: **0.3**
-- Appropriate medications: **0.2** (partial credit)
-- Appropriate follow-up: **0.2**
-- Safety violation (discharge critical patient): **−0.5**
+**Discharge reward breakdown (×0.7 weight):**
+- Diagnosis accuracy: 0.3 (fuzzy keyword match against true diagnosis)
+- Correct disposition: 0.3
+- Appropriate medications: 0.2 (partial credit per matched safe medication)
+- Appropriate follow-up: 0.2
 
 ---
 
@@ -164,7 +167,7 @@ Provide a complete clinical plan in one step.
 |---|---|---|---|
 | Triage Prioritization | Easy | 1 | 0.0 / 0.5 / 1.0 |
 | Investigation Ordering | Medium | Multi-step | 0.0–1.0 partial |
-| Discharge Planning | Hard | 1 | 0.0–1.0 composite |
+| Full Workup + Discharge | Hard | Multi-step (investigate → decide) | 0.0–1.0 (0.3 inv + 0.7 discharge) |
 
 ---
 

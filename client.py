@@ -58,20 +58,32 @@ class MedicalTriageEnv(EnvClient[TriageAction, TriageObservation, TriageState]):
         """Parse server WebSocket response into StepResult[TriageObservation]."""
         obs_data = payload.get("observation", {})
 
+        # Reward may be at top-level (standard OpenEnv) OR inside the observation
+        # (when environment.step() returns the Observation directly and the
+        # framework serializes reward as part of the obs dict).
+        # Check both locations so we never silently return 0.0.
+        reward = (
+            payload.get("reward")
+            if payload.get("reward") is not None
+            else obs_data.get("reward", 0.0)
+        )
+        done = payload.get("done", obs_data.get("done", False))
+
         observation = TriageObservation(
             current_patient=obs_data.get("current_patient"),
             available_investigations=obs_data.get("available_investigations", []),
             investigation_results=obs_data.get("investigation_results"),
             task_instruction=obs_data.get("task_instruction", ""),
             partial_score=obs_data.get("partial_score", 0.0),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
+            safety_flags=obs_data.get("safety_flags", []),
+            done=done,
+            reward=reward,
         )
 
         return StepResult(
             observation=observation,
-            reward=payload.get("reward", 0.0),
-            done=payload.get("done", False),
+            reward=reward,
+            done=done,
         )
 
     def _parse_state(self, payload: Dict) -> TriageState:

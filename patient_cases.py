@@ -82,7 +82,7 @@ PATIENT_CASES = [
         allergies=["bee_venom"],
         true_diagnosis="anaphylaxis",
         true_urgency=1,
-        required_investigations=[],
+        required_investigations=["ecg", "cbc", "electrolytes"],
         correct_disposition="admit",
         safe_medications=["epinephrine", "diphenhydramine", "methylprednisolone"]
     ),
@@ -146,7 +146,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="severe_hypoglycemia",
         true_urgency=1,
-        required_investigations=["blood_glucose"],
+        required_investigations=["blood_glucose", "cbc", "electrolytes"],
         correct_disposition="admit",
         safe_medications=["dextrose", "glucagon"]
     ),
@@ -227,7 +227,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="laceration_requiring_sutures",
         true_urgency=2,
-        required_investigations=[],
+        required_investigations=["cbc", "inr"],
         correct_disposition="discharge",
         safe_medications=["local_anesthetic", "tetanus", "antibiotics_if_dirty"]
     ),
@@ -259,7 +259,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="mild_traumatic_brain_injury",
         true_urgency=2,
-        required_investigations=["ct_head"],
+        required_investigations=["ct_head", "cbc"],
         correct_disposition="discharge",
         safe_medications=["acetaminophen", "concussion_precautions"]
     ),
@@ -275,7 +275,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="asthma_exacerbation",
         true_urgency=2,
-        required_investigations=[],
+        required_investigations=["cxr", "cbc", "electrolytes"],
         correct_disposition="discharge",
         safe_medications=["albuterol_nebs", "prednisone", "home_inhaler"]
     ),
@@ -291,7 +291,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="migraine",
         true_urgency=2,
-        required_investigations=[],
+        required_investigations=["ct_head", "cbc", "electrolytes"],
         correct_disposition="discharge",
         safe_medications=["sumatriptan", "metoclopramide", "ketorolac"]
     ),
@@ -323,7 +323,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="cellulitis",
         true_urgency=2,
-        required_investigations=["blood_culture_if_systemic"],
+        required_investigations=["blood_culture", "cbc"],
         correct_disposition="discharge",
         safe_medications=["cephalexin", "elevation", "follow_up_48h"]
     ),
@@ -340,7 +340,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="pharyngitis",
         true_urgency=3,
-        required_investigations=["rapid_strep"],
+        required_investigations=["rapid_strep", "cbc"],
         correct_disposition="discharge",
         safe_medications=["acetaminophen", "throat_lozenges", "antibiotics_if_strep"]
     ),
@@ -356,7 +356,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="ankle_sprain_grade1",
         true_urgency=3,
-        required_investigations=["xray_ankle_if_ottawa_positive"],
+        required_investigations=["xray_ankle", "cbc"],
         correct_disposition="discharge",
         safe_medications=["ibuprofen", "rice_protocol"]
     ),
@@ -372,7 +372,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="uncomplicated_uti",
         true_urgency=3,
-        required_investigations=["urinalysis"],
+        required_investigations=["urinalysis", "urine_culture"],
         correct_disposition="discharge",
         safe_medications=["nitrofurantoin", "phenazopyridine"]
     ),
@@ -388,7 +388,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="allergic_rhinitis",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["cbc", "urinalysis"],
         correct_disposition="discharge",
         safe_medications=["cetirizine", "nasal_steroid"]
     ),
@@ -404,7 +404,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="mechanical_low_back_pain",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["cbc", "urinalysis", "electrolytes"],
         correct_disposition="discharge",
         safe_medications=["ibuprofen", "muscle_relaxant", "physical_therapy"]
     ),
@@ -420,7 +420,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="bacterial_conjunctivitis",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["cbc", "urinalysis"],
         correct_disposition="discharge",
         safe_medications=["erythromycin_ointment"]
     ),
@@ -436,7 +436,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="vulvovaginal_candidiasis",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["urinalysis", "cbc"],
         correct_disposition="discharge",
         safe_medications=["fluconazole", "topical_antifungal"]
     ),
@@ -452,7 +452,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="contact_dermatitis",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["cbc", "urinalysis", "electrolytes"],
         correct_disposition="discharge",
         safe_medications=["hydrocortisone_cream", "antihistamine"]
     ),
@@ -468,7 +468,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="constipation",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["electrolytes", "cbc", "urinalysis"],
         correct_disposition="discharge",
         safe_medications=["polyethylene_glycol", "docusate"]
     ),
@@ -484,7 +484,7 @@ PATIENT_CASES = [
         allergies=[],
         true_diagnosis="viral_upper_respiratory_infection",
         true_urgency=3,
-        required_investigations=[],
+        required_investigations=["cbc", "urinalysis"],
         correct_disposition="discharge",
         safe_medications=["symptomatic_treatment", "rest", "fluids"]
     ),

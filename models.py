@@ -69,13 +69,14 @@ class TriageAction(Action):
     task_type: str = Field(
         ...,
         description=(
-            "Which task to perform. "
-            "Use 'easy' for triage, "
-            "'medium' for investigation ordering, "
-            "'hard' for full discharge decision."
+            "Which task / phase to perform:\n"
+            "  'easy'             — Triage: set urgency_assignment (1/2/3).\n"
+            "  'medium'           — Investigation ordering: set ordered_investigations.\n"
+            "  'hard_investigate' — Hard phase 1: order tests, or send [] when done.\n"
+            "  'hard_discharge'   — Hard phase 2: final discharge decision."
         ),
-        examples=["easy", "medium", "hard"],
-        json_schema_extra={"enum": ["easy", "medium", "hard"]},
+        examples=["easy", "medium", "hard_investigate", "hard_discharge"],
+        json_schema_extra={"enum": ["easy", "medium", "hard_investigate", "hard_discharge"]},
     )
 
     # ── EASY task field ────────────────────────────────────────────────────

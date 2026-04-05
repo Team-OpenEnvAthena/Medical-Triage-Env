@@ -23,6 +23,6 @@ tasks:
     reward_range: [0.0, 1.0]
   - name: hard
     difficulty: hard
-    description: "Full discharge decision: diagnosis, disposition, medications, follow-up."
-    max_steps: 8
+    description: "Multi-step: investigate (hard_investigate) then decide (hard_discharge). Reward = investigation quality (0.3) + discharge quality (0.7)."
+    max_steps: 10
     reward_range: [0.0, 1.0]
