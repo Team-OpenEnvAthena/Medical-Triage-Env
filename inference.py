@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Inference Script — Medical Triage Environment
-=============================================
-Mandatory stdout format (exact, no deviations):
+Medical Triage Environment — Baseline Inference Script
+=======================================================
+Mandatory stdout format (exact):
   [START] task=<name> env=<benchmark> model=<model>
   [STEP]  step=<n> action=<str> reward=<0.00> done=<true|false> error=<msg|null>
   [END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...>
 
-Required env vars:
-  API_BASE_URL   — LLM endpoint  (default: https://router.huggingface.co/v1)
-  MODEL_NAME     — model ID      (default: Qwen/Qwen2.5-72B-Instruct)
-  HF_TOKEN       — API key
-  BASE_URL       — running space (default: https://ishakhatana17-medical-triage-env.hf.space)
+Required environment variables:
+  API_BASE_URL   LLM endpoint   (default: https://router.huggingface.co/v1)
+  MODEL_NAME     Model ID       (default: Qwen/Qwen2.5-72B-Instruct)
+  HF_TOKEN       API key
+  BASE_URL       Space URL      (default: https://garima-mahato-medical-triage-env.hf.space)
 """
 
 import asyncio
@@ -25,56 +25,53 @@ from openai import OpenAI
 from client import MedicalTriageEnv
 from models import TriageAction
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME: str   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN: str     = os.getenv("HF_TOKEN", "")
-BASE_URL: str     = os.getenv("BASE_URL", "https://ishakhatana17-medical-triage-env.hf.space")
+BASE_URL: str     = os.getenv("BASE_URL", "https://garima-mahato-medical-triage-env.hf.space")
 BENCHMARK: str    = "medical_triage_env"
 
-# Fail fast if credentials missing
 if not HF_TOKEN:
     print("ERROR: HF_TOKEN environment variable not set.", file=sys.stderr)
     sys.exit(1)
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-# Task config
-TASK_MAX_STEPS = {"easy": 3, "medium": 5, "hard": 8}
+TASK_MAX_STEPS   = {"easy": 3, "medium": 5, "hard": 8}
 SUCCESS_THRESHOLD = 0.5
-TEMPERATURE = 0.1
+TEMPERATURE       = 0.1
 
 
-# ── Fix 1: Mandatory plain-text log format ────────────────────────────────────
+# ── Mandatory log helpers ──────────────────────────────────────────────────
 
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
-    done_val  = str(done).lower()
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
-          flush=True)
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} "
+          f"done={str(done).lower()} error={error_val}", flush=True)
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
-          flush=True)
+    print(f"[END] success={str(success).lower()} steps={steps} "
+          f"score={score:.3f} rewards={rewards_str}", flush=True)
 
 
-# ── LLM caller ────────────────────────────────────────────────────────────────
+# ── LLM ───────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""
-You are an experienced emergency physician making rapid triage decisions.
-You MUST respond with ONLY a valid JSON object — no markdown, no explanation.
+You are an experienced emergency physician making rapid clinical decisions.
+Respond with ONLY a valid JSON object — no markdown, no explanation.
 
 For task_type="easy":
   {"task_type": "easy", "urgency_assignment": <1|2|3>}
   1=Immediate (life-threatening), 2=Urgent, 3=Non-urgent
 
-For task_type="medium" (order tests one step at a time):
+For task_type="medium" (order one batch of tests per step):
   {"task_type": "medium", "ordered_investigations": ["test1", "test2"]}
-  Pass empty list [] when you are done ordering tests.
+  Pass empty list [] when done ordering.
   Available: ecg, troponin, cbc, cxr, ct_head, ct_abdomen, ultrasound,
              urinalysis, blood_culture, lactate, bnp, inr, electrolytes,
              rapid_strep, xray_ankle, xray_leg, blood_glucose, bhcg,
@@ -83,22 +80,19 @@ For task_type="medium" (order tests one step at a time):
 For task_type="hard":
   {"task_type": "hard", "diagnosis": "<string>", "disposition": "<admit|discharge>",
    "prescribed_medications": ["med1", "med2"], "follow_up_days": <int>}
-  SAFETY: NEVER discharge a patient with SpO2 < 90% or BP < 90/60.
+  SAFETY: NEVER discharge a patient with SpO2 < 90% or SBP < 90.
 """).strip()
 
 
 def call_llm(task_type: str, patient: dict, ordered_so_far: List[str], step: int) -> dict:
-    """Call LLM and return parsed action dict. Falls back to safe defaults on error."""
     vitals = (
-        f"HR {patient.get('heart_rate')} | "
-        f"BP {patient.get('blood_pressure')} | "
-        f"SpO2 {patient.get('spo2')}% | "
-        f"Temp {patient.get('temperature')}°C | "
+        f"HR {patient.get('heart_rate')} | BP {patient.get('blood_pressure')} | "
+        f"SpO2 {patient.get('spo2')}% | Temp {patient.get('temperature')}°C | "
         f"RR {patient.get('respiratory_rate')}"
     )
-    history_str = ", ".join(patient.get("past_medical_history") or []) or "None"
+    history_str   = ", ".join(patient.get("past_medical_history") or []) or "None"
     allergies_str = ", ".join(patient.get("allergies") or []) or "None"
-    ordered_str = ", ".join(ordered_so_far) if ordered_so_far else "None yet"
+    ordered_str   = ", ".join(ordered_so_far) if ordered_so_far else "None yet"
 
     user_msg = textwrap.dedent(f"""
     Step {step} | Task: {task_type}
@@ -108,7 +102,6 @@ def call_llm(task_type: str, patient: dict, ordered_so_far: List[str], step: int
     History: {history_str}
     Allergies: {allergies_str}
     Tests ordered so far: {ordered_str}
-
     Respond with ONLY a JSON action object.
     """).strip()
 
@@ -123,7 +116,6 @@ def call_llm(task_type: str, patient: dict, ordered_so_far: List[str], step: int
             max_tokens=300,
         )
         raw = (resp.choices[0].message.content or "").strip()
-        # Strip markdown fences if model added them
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -135,23 +127,19 @@ def call_llm(task_type: str, patient: dict, ordered_so_far: List[str], step: int
 
 
 def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> dict:
-    """Conservative fallback action used when LLM fails."""
     if task_type == "easy":
-        # Urgent if spo2 < 94 or hr > 110, else non-urgent
         spo2 = patient.get("spo2", 99)
         hr   = patient.get("heart_rate", 80)
         urgency = 1 if (spo2 < 90 or hr > 120) else (2 if spo2 < 95 else 3)
         return {"task_type": "easy", "urgency_assignment": urgency}
-
     elif task_type == "medium":
-        # Return empty list to end ordering phase
         if ordered_so_far:
             return {"task_type": "medium", "ordered_investigations": []}
         return {"task_type": "medium", "ordered_investigations": ["ecg", "cbc"]}
-
-    else:  # hard
+    else:
         spo2 = patient.get("spo2", 99)
-        sbp  = int((patient.get("blood_pressure") or "120/80").split("/")[0])
+        bp   = patient.get("blood_pressure", "120/80")
+        sbp  = int(bp.split("/")[0]) if "/" in str(bp) else 120
         disp = "admit" if (spo2 < 95 or sbp < 100) else "discharge"
         return {
             "task_type": "hard",
@@ -165,23 +153,20 @@ def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> d
 def make_action(data: dict) -> TriageAction:
     return TriageAction(**{k: v for k, v in data.items() if v is not None})
 
-
 def action_label(data: dict) -> str:
-    """Short human-readable label for the [STEP] line."""
     t = data.get("task_type", "?")
     if t == "easy":
         return f"triage(urgency={data.get('urgency_assignment')})"
     elif t == "medium":
-        tests = data.get("ordered_investigations", [])
-        return f"order_tests({tests})"
+        return f"order_tests({data.get('ordered_investigations', [])})"
     else:
         return f"discharge(disp={data.get('disposition')},dx={str(data.get('diagnosis',''))[:30]})"
 
 
-# ── Fix 7+8: multi-step episode runners, explicit task passed to reset() ──────
+# ── Episode runner ─────────────────────────────────────────────────────────
 
 async def run_episode(task_name: str) -> None:
-    """Run one full episode for the given task with proper multi-step trajectory."""
+    """Run one full multi-step episode for the given task."""
     rewards: List[float] = []
     steps_taken = 0
     success = False
@@ -190,11 +175,9 @@ async def run_episode(task_name: str) -> None:
 
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
-    # Fix 2: score comes from result.reward, not from /grader endpoint
-    # Fix 8: separate env context per task, pass task explicitly to reset()
     try:
         async with MedicalTriageEnv(base_url=BASE_URL) as env:
-            result = await env.reset(task=task_name)   # Fix 8: explicit task
+            result = await env.reset(task=task_name)
             obs    = result.observation
             patient = obs.current_patient or {}
             ordered_so_far: List[str] = []
@@ -203,52 +186,44 @@ async def run_episode(task_name: str) -> None:
                 if result.done:
                     break
 
-                # Get LLM action
                 action_data = call_llm(task_name, patient, ordered_so_far, step)
-                action_data["task_type"] = task_name   # always enforce correct task
+                action_data["task_type"] = task_name  # enforce correct task
 
-                # Track ordered tests for the medium prompt
                 if task_name == "medium":
                     new = action_data.get("ordered_investigations") or []
                     ordered_so_far.extend(t for t in new if t not in ordered_so_far)
 
-                action  = make_action(action_data)
-                label   = action_label(action_data)
+                action = make_action(action_data)
+                label  = action_label(action_data)
 
-                result  = await env.step(action)
-                reward  = result.reward or 0.0
-                done    = result.done
-                obs     = result.observation
-                error   = None
-
+                result = await env.step(action)
+                reward = result.reward or 0.0
+                done   = result.done
+                obs    = result.observation
                 rewards.append(reward)
                 steps_taken = step
 
-                log_step(step=step, action=label, reward=reward, done=done, error=error)
+                log_step(step=step, action=label, reward=reward, done=done, error=None)
 
                 if done:
                     break
 
-            # Normalise score to [0,1]
-            if rewards:
-                score = max(0.0, min(1.0, max(rewards)))   # best step reward
+            score = max(0.0, min(1.0, max(rewards))) if rewards else 0.0
             success = score >= SUCCESS_THRESHOLD
 
     except Exception as exc:
         print(f"[DEBUG] Episode error: {exc}", file=sys.stderr)
         import traceback; traceback.print_exc(file=sys.stderr)
     finally:
-        # Fix 2: log_end is ALWAYS emitted, even on exception
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main ───────────────────────────────────────────────────────────────────
 
 async def main() -> None:
     for task in ["easy", "medium", "hard"]:
         await run_episode(task)
-        print("", flush=True)   # blank separator between tasks
-
+        print("", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -4,77 +4,68 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Medical Triage Env Environment Client."""
+"""Medical Triage Environment Client."""
 
 from typing import Dict
 
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
-from openenv.core.env_server.types import State
 
-from models import TriageAction, TriageObservation
+from models import TriageAction, TriageObservation, TriageState
 
 
-class MedicalTriageEnv(
-    EnvClient[TriageAction, TriageObservation, State]
-):
+class MedicalTriageEnv(EnvClient[TriageAction, TriageObservation, TriageState]):
     """
-    Client for the Medical Triage Env Environment.
+    Client for the Medical Triage & Discharge Planning Environment.
 
-    This client maintains a persistent WebSocket connection to the environment server,
-    enabling efficient multi-step interactions with lower latency.
-    Each client instance has its own dedicated environment session on the server.
+    Connects via WebSocket (/ws) for persistent, stateful sessions.
 
-    Example:
-        >>> # Connect to a running server
-        >>> with MedicalTriageEnv(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
-        ...
-        ...     result = client.step(TriageAction(message="Hello!"))
-        ...     print(result.observation.echoed_message)
+    Usage (async):
+        async with MedicalTriageEnv(base_url="https://...hf.space") as env:
+            result = await env.reset(task="easy")
+            result = await env.step(TriageAction(task_type="easy", urgency_assignment=1))
+            print(result.reward)          # float in [0.0, 1.0]
+            print(result.observation.partial_score)  # shaped reward signal
+            state = await env.state()
+            print(state.current_task)     # "easy" — for TRL/GRPO reward routing
 
-    Example with Docker:
-        >>> # Automatically start container and connect
-        >>> client = MedicalTriageEnv.from_docker_image("medical_triage_env-env:latest")
-        >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(MedicalTriageAction(message="Test"))
-        ... finally:
-        ...     client.close()
+    Usage (sync):
+        with MedicalTriageEnv(base_url="https://...hf.space").sync() as env:
+            result = env.reset(task="hard")
+            result = env.step(TriageAction(
+                task_type="hard",
+                diagnosis="pneumonia",
+                disposition="admit",
+                prescribed_medications=["antibiotics"],
+                follow_up_days=1
+            ))
+
+    Usage from Docker image:
+        client = await MedicalTriageEnv.from_docker_image("medical-triage-env:latest")
+        async with client:
+            result = await client.reset()
     """
 
     def _step_payload(self, action: TriageAction) -> Dict:
         """
-        Convert TriageAction to JSON payload for step message.
-
-        Args:
-            action: TriageAction instance
-
-        Returns:
-            Dictionary representation suitable for JSON encoding
+        Convert TriageAction to WebSocket step payload.
+        Returns flat action fields — the EnvClient WebSocket protocol
+        does not use an {"action": ...} wrapper.
         """
         return action.model_dump(exclude_none=True)
-        
+
     def _parse_result(self, payload: Dict) -> StepResult[TriageObservation]:
-        """
-        Parse server response into StepResult[TriageObservation].
-
-        Args:
-            payload: JSON response data from server
-
-        Returns:
-            StepResult with TriageObservation
-        """
+        """Parse server WebSocket response into StepResult[TriageObservation]."""
         obs_data = payload.get("observation", {})
-        
-        # Parse the observation according to TriageObservation model
+
         observation = TriageObservation(
             current_patient=obs_data.get("current_patient"),
             available_investigations=obs_data.get("available_investigations", []),
             investigation_results=obs_data.get("investigation_results"),
             task_instruction=obs_data.get("task_instruction", ""),
-            partial_score=obs_data.get("partial_score", 0.0)
+            partial_score=obs_data.get("partial_score", 0.0),
+            done=payload.get("done", False),
+            reward=payload.get("reward"),
         )
 
         return StepResult(
@@ -83,17 +74,15 @@ class MedicalTriageEnv(
             done=payload.get("done", False),
         )
 
-    def _parse_state(self, payload: Dict) -> State:
+    def _parse_state(self, payload: Dict) -> TriageState:
         """
-        Parse server response into State object.
+        Parse server state response into TriageState.
 
-        Args:
-            payload: JSON response from state request
-
-        Returns:
-            State object with episode_id and step_count
+        TriageState extends base State (episode_id, step_count) with
+        current_task — used by TRL/GRPO to route task-specific reward functions.
         """
-        return State(
+        return TriageState(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),
+            current_task=payload.get("current_task", "easy"),
         )

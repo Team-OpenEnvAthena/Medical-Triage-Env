@@ -4,13 +4,14 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Medical Triage Environment."""
+"""Medical Triage & Discharge Planning Environment for OpenEnv."""
 
 from .client import MedicalTriageEnv
-from .models import TriageAction, TriageObservation   # Fix 4: correct class names
+from .models import TriageAction, TriageObservation, TriageState
 
 __all__ = [
+    "MedicalTriageEnv",
     "TriageAction",
     "TriageObservation",
-    "MedicalTriageEnv",
+    "TriageState",
 ]

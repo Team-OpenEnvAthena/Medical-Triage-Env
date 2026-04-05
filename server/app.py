@@ -4,22 +4,26 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Enable web UI at /web (required for HF Spaces App tab)
 os.environ.setdefault("ENABLE_WEB_INTERFACE", "true")
 
-from openenv.core.env_server import create_web_interface_app
+from openenv.core.env_server import create_app
 from models import TriageAction, TriageObservation
 from server.environment import MedicalTriageEnvironment
 
-# Pass the CLASS, not an instance
-app = create_web_interface_app(
-    MedicalTriageEnvironment,   # <-- class, not MedicalTriageEnvironment()
+# Pass class (not instance) — create_app instantiates per session
+app = create_app(
+    MedicalTriageEnvironment,
     TriageAction,
     TriageObservation,
+    env_name="medical_triage_env",
+    max_concurrent_envs=100,
 )
 
 
 @app.get("/tasks")
 def list_tasks():
+    """List available tasks and their action schemas."""
     return {
         "tasks": ["easy", "medium", "hard"],
         "task_descriptions": {
@@ -38,10 +42,7 @@ def list_tasks():
         },
     }
 
-
-@app.get("/health")
-def health_check():
-    return {"status": "healthy", "environment": "medical_triage_env"}
+# NOTE: /health is already provided by create_app internally — not duplicated here
 
 
 def main():
