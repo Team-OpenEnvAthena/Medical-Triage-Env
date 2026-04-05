@@ -176,6 +176,15 @@ class TriageObservation(Observation):
         0.0,
         description="Cumulative shaped reward accumulated so far this episode"
     )
+    safety_flags: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Safety violations triggered this episode. "
+            "Non-empty means the agent took a clinically unsafe action "
+            "(e.g. discharging a critically ill patient). "
+            "These cause a -0.5 reward penalty."
+        )
+    )
 
 
 # ============================================================================

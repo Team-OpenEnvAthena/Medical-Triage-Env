@@ -46,6 +46,7 @@ class MedicalTriageEnvironment(Environment):
         self._ordered_tests: list = []
         self._cumulative_reward: float = 0.0
         self._done: bool = False
+        self._safety_flags: list = []
 
     # ── OpenEnv required API ───────────────────────────────────────────────
 
@@ -212,6 +213,8 @@ class MedicalTriageEnvironment(Environment):
         # 4. Safety penalty: never discharge an immediate patient
         if action.disposition == "discharge" and self._current_patient.true_urgency == 1:
             total -= 0.5
+            self._safety_flags.append(
+                f"UNSAFE: discharged urgency-1 patient {self._current_patient.patient_id}")
 
         # 5. Follow-up appropriateness (0.2)
         if action.follow_up_days is not None:
@@ -254,6 +257,7 @@ class MedicalTriageEnvironment(Environment):
             available_investigations=self.AVAILABLE_TESTS,
             task_instruction=self._get_task_instruction(),
             partial_score=round(self._cumulative_reward, 4),  # shaped reward — observation only
+            safety_flags=list(self._safety_flags),
         )
 
     def _get_task_instruction(self) -> str:

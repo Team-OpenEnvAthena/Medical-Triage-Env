@@ -3,7 +3,7 @@
 Medical Triage Environment — Baseline Inference Script
 =======================================================
 Mandatory stdout format (exact):
-  [START] task=<name> env=<benchmark> model=<model>
+  [START] task=<n> env=<benchmark> model=<model>
   [STEP]  step=<n> action=<str> reward=<0.00> done=<true|false> error=<msg|null>
   [END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...>
 
@@ -26,11 +26,12 @@ from client import MedicalTriageEnv
 from models import TriageAction
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file
-# ── Config ────────────────────────────────────────────────────────────────────
+
+# ── Config ─────────────────────────────────────────────────────────────────
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME: str   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN: str     = os.getenv("HF_TOKEN", "")
-BASE_URL: str     = os.getenv("BASE_URL", "https://garima-mahato-medical-triage-env.hf.space")
+BASE_URL: str     = os.getenv("BASE_URL", "https://ishakhatana17-medical-triage-env.hf.space")
 BENCHMARK: str    = "medical_triage_env"
 
 if not HF_TOKEN:
@@ -39,7 +40,9 @@ if not HF_TOKEN:
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-TASK_MAX_STEPS   = {"easy": 3, "medium": 5, "hard": 8}
+# Easy and hard are single-step by design (env returns done=True after 1 action).
+# Medium is multi-step — reserve 1 slot for the final [] signal.
+TASK_MAX_STEPS    = {"easy": 3, "medium": 5, "hard": 8}
 SUCCESS_THRESHOLD = 0.5
 TEMPERATURE       = 0.1
 
@@ -117,6 +120,7 @@ def call_llm(task_type: str, patient: dict, ordered_so_far: List[str], step: int
             max_tokens=300,
         )
         raw = (resp.choices[0].message.content or "").strip()
+        # Strip markdown code fences if model adds them
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -128,12 +132,14 @@ def call_llm(task_type: str, patient: dict, ordered_so_far: List[str], step: int
 
 
 def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> dict:
+    """Conservative fallback when LLM fails or returns unparseable output."""
     if task_type == "easy":
         spo2 = patient.get("spo2", 99)
         hr   = patient.get("heart_rate", 80)
         urgency = 1 if (spo2 < 90 or hr > 120) else (2 if spo2 < 95 else 3)
         return {"task_type": "easy", "urgency_assignment": urgency}
     elif task_type == "medium":
+        # If we already ordered some tests, signal done; otherwise order basics
         if ordered_so_far:
             return {"task_type": "medium", "ordered_investigations": []}
         return {"task_type": "medium", "ordered_investigations": ["ecg", "cbc"]}
@@ -154,6 +160,7 @@ def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> d
 def make_action(data: dict) -> TriageAction:
     return TriageAction(**{k: v for k, v in data.items() if v is not None})
 
+
 def action_label(data: dict) -> str:
     t = data.get("task_type", "?")
     if t == "easy":
@@ -164,10 +171,32 @@ def action_label(data: dict) -> str:
         return f"discharge(disp={data.get('disposition')},dx={str(data.get('diagnosis',''))[:30]})"
 
 
+def compute_score(task_name: str, rewards: List[float]) -> float:
+    """
+    Compute normalised episode score from step rewards.
+
+    Fix 1+3: Task-specific score logic:
+    - easy:   single step → rewards[0] directly
+    - medium: final step reward (the [] signal triggers F1 grader)
+              NOT max() which would pick an inflated intermediate partial value
+    - hard:   single step → rewards[0] directly
+    """
+    if not rewards:
+        return 0.0
+    if task_name == "medium":
+        # Last reward is the definitive score: either the F1 from [] signal
+        # or the final partial reward if [] was never sent (fallback)
+        score = rewards[-1]
+    else:
+        # Easy and hard: single-step, rewards[0] is the only reward
+        score = rewards[-1]
+    return max(0.0, min(1.0, score))
+
+
 # ── Episode runner ─────────────────────────────────────────────────────────
 
 async def run_episode(task_name: str) -> None:
-    """Run one full multi-step episode for the given task."""
+    """Run one full episode for the given task."""
     rewards: List[float] = []
     steps_taken = 0
     success = False
@@ -179,7 +208,7 @@ async def run_episode(task_name: str) -> None:
     try:
         async with MedicalTriageEnv(base_url=BASE_URL) as env:
             result = await env.reset(task=task_name)
-            obs    = result.observation
+            obs     = result.observation
             patient = obs.current_patient or {}
             ordered_so_far: List[str] = []
 
@@ -187,9 +216,23 @@ async def run_episode(task_name: str) -> None:
                 if result.done:
                     break
 
-                action_data = call_llm(task_name, patient, ordered_so_far, step)
-                action_data["task_type"] = task_name  # enforce correct task
+                # Fix 2: For medium task, force the [] finalisation signal
+                # on the second-to-last step so the F1 grader always runs.
+                # Without this, if LLM keeps ordering tests, the episode hits
+                # max_steps and ends with only a partial reward, not the F1 score.
+                force_finalise = (
+                    task_name == "medium"
+                    and step == max_steps - 1
+                    and not result.done
+                )
 
+                if force_finalise:
+                    action_data = {"task_type": "medium", "ordered_investigations": []}
+                else:
+                    action_data = call_llm(task_name, patient, ordered_so_far, step)
+                    action_data["task_type"] = task_name  # enforce correct task
+
+                # Track ordered tests locally for the LLM prompt context
                 if task_name == "medium":
                     new = action_data.get("ordered_investigations") or []
                     ordered_so_far.extend(t for t in new if t not in ordered_so_far)
@@ -197,25 +240,33 @@ async def run_episode(task_name: str) -> None:
                 action = make_action(action_data)
                 label  = action_label(action_data)
 
-                result = await env.step(action)
-                reward = result.reward or 0.0
-                done   = result.done
-                obs    = result.observation
+                result  = await env.step(action)
+                reward  = result.reward or 0.0
+                done    = result.done
+                obs     = result.observation
+
+                # Fix 4: Surface safety flags in the error= field of [STEP] log
+                safety_flags = getattr(obs, "safety_flags", []) or []
+                error_msg = safety_flags[0] if safety_flags else None
+
                 rewards.append(reward)
                 steps_taken = step
 
-                log_step(step=step, action=label, reward=reward, done=done, error=None)
+                log_step(step=step, action=label, reward=reward,
+                         done=done, error=error_msg)
 
                 if done:
                     break
 
-            score = max(0.0, min(1.0, max(rewards))) if rewards else 0.0
+            # Fix 1+3: Use task-specific score logic, not max(rewards)
+            score   = compute_score(task_name, rewards)
             success = score >= SUCCESS_THRESHOLD
 
     except Exception as exc:
         print(f"[DEBUG] Episode error: {exc}", file=sys.stderr)
         import traceback; traceback.print_exc(file=sys.stderr)
     finally:
+        # Always emit [END] even on exception (rewards/score may be partial)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
@@ -224,7 +275,7 @@ async def run_episode(task_name: str) -> None:
 async def main() -> None:
     for task in ["easy", "medium", "hard"]:
         await run_episode(task)
-        print("", flush=True)
+        print("", flush=True)  # blank line between tasks
 
 if __name__ == "__main__":
     asyncio.run(main())
