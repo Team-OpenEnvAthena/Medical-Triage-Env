@@ -10,13 +10,13 @@ pinned: false
 
 A reinforcement learning environment for training AI agents to perform clinical triage and discharge planning tasks. Built with OpenEnv for the Meta PyTorch Hackathon 2026.
 
-## 🏥 Overview
+## Overview
 
 This environment simulates an emergency department workflow where an AI agent acts as a triage nurse and discharge coordinator. The agent must prioritize patients, order appropriate diagnostic tests, and make safe discharge decisions under time and resource constraints.
 
 **Why this matters:** Clinical decision support is a $5B+ industry, and this environment provides a standardized way to evaluate medical reasoning capabilities in large language models.
 
-## 🎯 Tasks
+## Tasks
 
 The environment includes three progressive tasks of increasing difficulty:
 
@@ -44,7 +44,7 @@ The environment includes three progressive tasks of increasing difficulty:
 - **Output:** Diagnosis, admit/discharge decision, medications, follow-up timeline
 - **Grading:** Weighted scoring (30% diagnosis + 30% disposition + 20% medications + 20% follow-up) with **-0.5 safety penalty** for discharging critical patients
 
-## 📊 Environment Details
+## Environment Details
 
 ### Patient Cases
 30 synthetic patient cases spanning three urgency tiers:
@@ -76,8 +76,83 @@ Each case includes:
 - Follow-up planning: +0.2
 
 **Safety-first design:** Discharging a patient with urgency=1 (life-threatening) incurs a -0.5 penalty, ensuring the agent learns to prioritize patient safety.
+##  Detailed Scoring Guide
+### Task 1: Triage Prioritization (Easy)
 
-## 🚀 Quick Start
+**Task:** Assign one of **3 urgency levels** (1=Immediate, 2=Urgent, 3=Non-urgent)
+
+**Scoring:**
+- Exact urgency match: **1.0**
+- Off by 1 level: **0.5**
+- Off by 2 levels: **0.0**
+
+**Possible scores:** Only **0.0, 0.5, or 1.0** (no other values)
+
+**Example:**
+- Correct urgency: 2 (Urgent)
+- Agent assigns 2 → **1.0**  (perfect match)
+- Agent assigns 1 or 3 → **0.5** (off by 1 level)
+- Agent assigns the opposite extreme → **0.0** (off by 2 levels - dangerous)
+
+---
+
+### Task 2: Investigation Ordering (Medium)
+
+**Formula:** `F1 Score - (0.1 × number_of_unnecessary_tests)`
+
+**Components:**
+- **Precision:** How many ordered tests were actually needed?
+- **Recall:** How many required tests were ordered?
+- **F1 Score:** Harmonic mean of precision and recall
+- **Penalty:** -0.1 per unnecessary test (encourages cost-conscious ordering)
+
+**Score Interpretation:**
+- **0.8-1.0:** Excellent - ordered right tests, minimal waste
+- **0.5-0.7:** Good - got most tests, some over/under-testing
+- **0.2-0.4:** Poor - missed critical tests or severe over-testing
+- **0.0-0.1:** Failed - wrong workup entirely
+
+**Example:**
+- Required: `["ct_abdomen", "cbc", "lactate"]`
+- Agent orders: `["cbc", "urinalysis", "lactate", "electrolytes"]`
+- True positives: 2 (cbc, lactate)
+- Precision: 2/4 = 0.5, Recall: 2/3 = 0.67
+- F1: 0.571, Penalty: -0.2 (2 unnecessary tests)
+- **Final: 0.371**
+
+---
+
+### Task 3: Full Discharge Decision (Hard)
+
+**Formula:** 
+```
+0.3 × diagnosis_match + 
+0.3 × disposition_match + 
+0.2 × medication_match + 
+0.2 × followup_match - 
+safety_penalty
+```
+
+**Component Scoring:**
+- **Diagnosis:** 1.0 if matches ground truth, 0.0 otherwise
+- **Disposition:** 1.0 if admit/discharge correct, 0.0 otherwise
+- **Medications:** Proportion of correct meds (e.g., 2/3 = 0.67)
+- **Follow-up:** 1.0 if within acceptable range, 0.0 otherwise
+- **Safety Penalty:** -0.5 if discharging a critical patient (urgency=1)
+
+**Score Interpretation:**
+- **0.8-1.0:** Excellent - correct diagnosis, safe disposition, appropriate care
+- **0.5-0.7:** Good - mostly correct with minor medication/follow-up issues
+- **0.3-0.4:** Fair - got some components right but major gaps
+- **0.0-0.2:** Poor/Unsafe - wrong diagnosis or unsafe discharge
+
+**Example:**
+- Patient: Anaphylaxis (urgency=1)
+- Agent: diagnosis="Anaphylaxis" , disposition="admit" , meds=["epinephrine", "antihistamine"] 
+- Score: 0.3 + 0.3 + 0.2 + partial followup = **0.667**
+
+
+##  Quick Start
 
 ### Installation
 ```bash
