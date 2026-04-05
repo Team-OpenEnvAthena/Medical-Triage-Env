@@ -21,6 +21,8 @@ from typing import List, Optional
 from openai import OpenAI
 from client import MedicalTriageEnv
 from models import TriageAction
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file
 
 # ── Config ─────────────────────────────────────────────────────────────────
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
