@@ -21,11 +21,11 @@ Built for the **Meta PyTorch × HuggingFace OpenEnv Hackathon 2026**.
 
 ## 🎮 Try It Now (No Setup)
 
-**Interactive web UI:** https://garima-mahato-medical-triage-env.hf.space/web
+**Interactive web UI:** https://ishakhatana17-medical-triage-env.hf.space/web
 
 Click **Reset** to get a patient case, then fill in the action form and click **Step**.
 
-**API docs (Swagger):** https://garima-mahato-medical-triage-env.hf.space/docs
+**API docs (Swagger):** https://ishakhatana17-medical-triage-env.hf.space/docs
 
 ---
 

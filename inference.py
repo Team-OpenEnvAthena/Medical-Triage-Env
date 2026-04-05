@@ -28,7 +28,7 @@ load_dotenv()  # Load .env file
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME: str   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN: str     = os.getenv("HF_TOKEN", "")
-BASE_URL: str     = os.getenv("BASE_URL", "https://garima-mahato-medical-triage-env.hf.space")
+BASE_URL: str     = os.getenv("BASE_URL", "https://ishakhatana17-medical-triage-env.hf.space")
 BENCHMARK: str    = "medical_triage_env"
 
 if not HF_TOKEN:
