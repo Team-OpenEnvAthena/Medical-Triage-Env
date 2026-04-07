@@ -1,136 +1,136 @@
 #!/usr/bin/env python3
 """
 Medical Triage Environment — Baseline Inference Script
-=======================================================
-Mandatory stdout format:
-  [START] task=<n> env=<benchmark> model=<model>
-  [STEP]  step=<n> action=<str> reward=<0.00> done=<true|false> error=<msg|null>
-  [END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...>
 
-Required env vars:
-  API_BASE_URL, MODEL_NAME, HF_TOKEN, BASE_URL
+Handles Options B+C+D mechanics:
+  - Reads locked_investigations to avoid ordering blocked tests
+  - Reads pending_results to know what is still in the lab
+  - Adapts strategy based on arrived results
+  - Orders physical_exam early to reveal hidden history (Option C)
 """
-
-import asyncio
-import json
-import os
-import sys
-import textwrap
-from typing import List, Optional
-
+import asyncio, json, os, sys, textwrap
+from typing import Dict, List, Optional
 from openai import OpenAI
 from client import MedicalTriageEnv
 from models import TriageAction
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file
 
-# ── Config ─────────────────────────────────────────────────────────────────
-API_BASE_URL: str = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME: str   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN: str     = os.getenv("HF_TOKEN", "")
-BASE_URL: str     = os.getenv("BASE_URL", "https://ishakhatana17-medical-triage-env.hf.space")
-BENCHMARK: str    = "medical_triage_env"
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN     = os.getenv("HF_TOKEN", "")
+BASE_URL     = os.getenv("BASE_URL", "https://ishakhatana17-medical-triage-env.hf.space")
+BENCHMARK    = "medical_triage_env"
 
 if not HF_TOKEN:
-    print("ERROR: HF_TOKEN not set.", file=sys.stderr)
-    sys.exit(1)
+    print("ERROR: HF_TOKEN not set.", file=sys.stderr); sys.exit(1)
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-TASK_MAX_STEPS    = {"easy": 3, "medium": 6, "hard": 10}
+TASK_MAX_STEPS    = {"easy": 3, "medium": 8, "hard": 12}
 SUCCESS_THRESHOLD = 0.3
 TEMPERATURE       = 0.1
 
 
 # ── Log helpers ────────────────────────────────────────────────────────────
 
-def log_start(task: str, env: str, model: str) -> None:
+def log_start(task, env, model):
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
-def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+def log_step(step, action, reward, done, error):
     print(f"[STEP] step={step} action={action} reward={reward:.2f} "
           f"done={str(done).lower()} error={error or 'null'}", flush=True)
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+def log_end(success, steps, score, rewards):
     print(f"[END] success={str(success).lower()} steps={steps} "
-          f"score={score:.3f} rewards={rewards_str}", flush=True)
+          f"score={score:.3f} rewards={','.join(f'{r:.2f}' for r in rewards)}", flush=True)
 
 
-# ── LLM prompts ────────────────────────────────────────────────────────────
+# ── LLM ───────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""
-You are an experienced emergency physician making clinical decisions.
-Respond with ONLY a valid JSON object — no markdown, no explanation.
+You are an experienced emergency physician. Respond with ONLY valid JSON — no markdown.
 
-ACTION TYPES:
+IMPORTANT MECHANICS (read carefully):
+1. MAX 2 TESTS PER STEP — do not request more than 2 at once.
+2. PREREQUISITES (Option B) — locked_investigations shows tests you cannot order yet.
+   You must complete the prerequisite tests first.
+3. DELAYED RESULTS (Option D) — pending_results shows tests ordered but not yet returned.
+   Plan your next actions while waiting. Do not re-order pending tests.
+4. HIDDEN INFORMATION (Option C) — order "physical_exam" early to reveal hidden clinical
+   findings and full history. Many diagnoses require exam findings to unlock CT/LP.
+5. Order tests logically — start with rapid tests (ecg, blood_glucose, physical_exam),
+   then standard tests based on results, then confirmatory slow tests (CT, LP).
 
-1. task_type="easy"  →  triage urgency:
-   {"task_type": "easy", "urgency_assignment": <1|2|3>}
-   1=Immediate, 2=Urgent, 3=Non-urgent
+ACTION FORMATS:
 
-2. task_type="medium"  →  order tests (or [] when done):
-   {"task_type": "medium", "ordered_investigations": ["ecg", "troponin"]}
-   {"task_type": "medium", "ordered_investigations": []}   ← signals done
+{"task_type": "easy", "urgency_assignment": <1|2|3>}
 
-3. task_type="hard_investigate"  →  hard task phase 1, order tests:
-   {"task_type": "hard_investigate", "ordered_investigations": ["ecg", "troponin"]}
-   {"task_type": "hard_investigate", "ordered_investigations": []}  ← move to discharge
+{"task_type": "medium", "ordered_investigations": ["test1", "test2"]}   ← max 2
+{"task_type": "medium", "ordered_investigations": []}                   ← done
 
-4. task_type="hard_discharge"  →  hard task phase 2, final decision:
-   {"task_type": "hard_discharge",
-    "diagnosis": "acute myocardial infarction",
-    "disposition": "admit",
-    "prescribed_medications": ["aspirin", "nitroglycerin"],
-    "follow_up_days": 1}
+{"task_type": "hard_investigate", "ordered_investigations": ["test1"]}  ← max 2
+{"task_type": "hard_investigate", "ordered_investigations": []}         ← move to discharge
 
-Available tests: ecg, troponin, cbc, cxr, ct_head, ct_abdomen, ultrasound,
-  urinalysis, blood_culture, lactate, bnp, inr, electrolytes, rapid_strep,
-  xray_ankle, xray_leg, blood_glucose, bhcg, lumbar_puncture, endoscopy,
-  compartment_pressure, urine_culture
+{"task_type": "hard_discharge",
+ "diagnosis": "...", "disposition": "admit|discharge",
+ "prescribed_medications": ["..."], "follow_up_days": <int>}
 
-SAFETY: NEVER discharge (disposition="discharge") a patient with SpO2<90% or SBP<90.
+SAFETY: NEVER discharge SpO2<90%, BP<90/60, or urgency=1 patients.
 """).strip()
 
 
-def build_prompt(task_type: str, patient: dict, ordered_so_far: List[str],
-                 test_results: dict, step: int, phase: str = "") -> str:
+def build_prompt(task_type: str, patient: dict, obs) -> str:
     vitals = (
         f"HR {patient.get('heart_rate')} | BP {patient.get('blood_pressure')} | "
         f"SpO2 {patient.get('spo2')}% | Temp {patient.get('temperature')}°C | "
         f"RR {patient.get('respiratory_rate')}"
     )
-    history_str = ", ".join(patient.get("past_medical_history") or []) or "None"
-    allergies_str = ", ".join(patient.get("allergies") or []) or "None"
+    history = ", ".join(patient.get("past_medical_history") or []) or "None disclosed yet"
+    extra   = patient.get("additional_findings") or {}
+    extra_str = "\n".join(f"  {k}: {v}" for k, v in extra.items()) if extra else "  None yet — order physical_exam"
 
-    results_str = ""
-    if test_results:
-        results_str = "\nTest results:\n" + "\n".join(
-            f"  {k}: {v}" for k, v in test_results.items()
-        )
-    ordered_str = ", ".join(ordered_so_far) if ordered_so_far else "none yet"
+    results = obs.investigation_results or {}
+    results_str = "\n".join(f"  {k}: {v}" for k, v in results.items()) if results else "  None yet"
 
+    pending = obs.pending_results or {}
+    pending_str = ", ".join(f"{t}({s}step{'s' if s>1 else ''})" for t,s in pending.items()) or "none"
+
+    available = obs.available_investigations or []
+    locked    = obs.locked_investigations or {}
+    locked_str = ", ".join(f"{t}(needs {','.join(p)})" for t,p in locked.items()) or "none"
+
+    phase = patient.get("hard_phase", "")
     phase_hint = ""
     if task_type == "hard_investigate":
-        phase_hint = "\nPhase: INVESTIGATION — order tests, then send [] when ready to decide."
+        phase_hint = "\nPhase: INVESTIGATION — order tests (max 2/step), send [] when ready."
     elif task_type == "hard_discharge":
-        phase_hint = "\nPhase: DISCHARGE DECISION — all test results available, make your final plan."
+        phase_hint = "\nPhase: DISCHARGE DECISION — all results available, make your final plan."
 
     return textwrap.dedent(f"""
-    Step {step} | Task: {task_type}{phase_hint}
-    Patient: {patient.get('age')}yo {patient.get('sex')}
+    Task: {task_type}{phase_hint}
+    Patient: {patient.get('age')}yo {patient.get('sex')} | ID: {patient.get('id')}
     Complaint: {patient.get('chief_complaint')}
     Vitals: {vitals}
-    History: {history_str} | Allergies: {allergies_str}
-    Tests ordered: {ordered_str}{results_str}
-    Respond with ONLY a JSON action.
+    History: {history}
+    Additional exam findings: {extra_str}
+    Allergies: {', '.join(patient.get('allergies') or []) or 'None'}
+
+    Results arrived:
+{results_str}
+
+    Pending results: {pending_str}
+    Available to order: {', '.join(available[:15]) or 'none'}
+    Locked (prerequisite needed): {locked_str}
+
+    Ordered so far: {', '.join(patient.get('ordered_tests') or []) or 'none'}
+
+    Respond with ONLY a JSON action. Remember: max 2 tests per step.
     """).strip()
 
 
-def call_llm(task_type: str, patient: dict, ordered_so_far: List[str],
-             test_results: dict, step: int) -> dict:
-    phase = patient.get("hard_phase", "")
-    user_msg = build_prompt(task_type, patient, ordered_so_far, test_results, step, phase)
+def call_llm(task_type: str, patient: dict, obs) -> dict:
+    user_msg = build_prompt(task_type, patient, obs)
     try:
         resp = client.chat.completions.create(
             model=MODEL_NAME,
@@ -138,36 +138,41 @@ def call_llm(task_type: str, patient: dict, ordered_so_far: List[str],
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user",   "content": user_msg},
             ],
-            temperature=TEMPERATURE,
-            max_tokens=400,
+            temperature=TEMPERATURE, max_tokens=400,
         )
         raw = (resp.choices[0].message.content or "").strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
+            if raw.startswith("json"): raw = raw[4:]
         return json.loads(raw.strip())
-    except Exception as exc:
-        print(f"[DEBUG] LLM error step {step}: {exc}", file=sys.stderr)
-        return _safe_default(task_type, patient, ordered_so_far)
+    except Exception as e:
+        print(f"[DEBUG] LLM error: {e}", file=sys.stderr)
+        return _safe_default(task_type, patient, obs)
 
 
-def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> dict:
+def _safe_default(task_type: str, patient: dict, obs) -> dict:
+    available = obs.available_investigations or []
+    pending   = obs.pending_results or {}
+    ordered   = patient.get("ordered_tests") or []
+
     if task_type == "easy":
         spo2 = patient.get("spo2", 99)
         hr   = patient.get("heart_rate", 80)
         urgency = 1 if (spo2 < 90 or hr > 120) else (2 if spo2 < 95 else 3)
         return {"task_type": "easy", "urgency_assignment": urgency}
 
-    elif task_type == "medium":
-        if ordered_so_far:
-            return {"task_type": "medium", "ordered_investigations": []}
-        return {"task_type": "medium", "ordered_investigations": ["ecg", "cbc"]}
-
-    elif task_type == "hard_investigate":
-        if ordered_so_far:
-            return {"task_type": "hard_investigate", "ordered_investigations": []}
-        return {"task_type": "hard_investigate", "ordered_investigations": ["ecg", "cbc", "cxr"]}
+    elif task_type in ("medium", "hard_investigate"):
+        if not ordered:
+            # Always start with physical_exam if available (reveals hidden info)
+            first = ["physical_exam"] if "physical_exam" in available else available[:2]
+            return {"task_type": task_type, "ordered_investigations": first[:2]}
+        if ordered:
+            # If we have some results, signal done
+            if len(ordered) >= 2:
+                return {"task_type": task_type, "ordered_investigations": []}
+            # Order next available tests
+            not_ordered = [t for t in available if t not in ordered and t not in pending]
+            return {"task_type": task_type, "ordered_investigations": not_ordered[:2] or []}
 
     else:  # hard_discharge
         spo2 = patient.get("spo2", 99)
@@ -176,7 +181,7 @@ def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> d
         disp = "admit" if (spo2 < 95 or sbp < 100) else "discharge"
         return {
             "task_type": "hard_discharge",
-            "diagnosis": "acute illness — see test results",
+            "diagnosis": "acute illness based on clinical findings",
             "disposition": disp,
             "prescribed_medications": ["supportive care"],
             "follow_up_days": 1,
@@ -186,7 +191,6 @@ def _safe_default(task_type: str, patient: dict, ordered_so_far: List[str]) -> d
 def make_action(data: dict) -> TriageAction:
     return TriageAction(**{k: v for k, v in data.items() if v is not None})
 
-
 def action_label(data: dict) -> str:
     t = data.get("task_type", "?")
     if t == "easy":
@@ -194,73 +198,48 @@ def action_label(data: dict) -> str:
     elif t == "medium":
         return f"order_tests({data.get('ordered_investigations', [])})"
     elif t == "hard_investigate":
-        tests = data.get("ordered_investigations", [])
-        return f"hard_investigate({'[]' if not tests else tests})"
+        return f"hard_inv({data.get('ordered_investigations', [])})"
     elif t == "hard_discharge":
         return f"hard_discharge(disp={data.get('disposition')},dx={str(data.get('diagnosis',''))[:25]})"
     return f"unknown({t})"
 
-
 def compute_score(task_name: str, rewards: List[float]) -> float:
-    if not rewards:
-        return 0.0
-    if task_name == "medium":
-        return max(0.0, min(1.0, rewards[-1]))
-    elif task_name == "hard":
-        # Sum all rewards: investigation partial + final discharge score
-        return max(0.0, min(1.0, sum(rewards)))
-    else:
-        return max(0.0, min(1.0, rewards[-1]))
+    if not rewards: return 0.01
+    raw = rewards[-1] if task_name == "medium" else sum(rewards) if task_name == "hard" else rewards[-1]
+    return round(max(0.01, min(0.99, raw)), 4)
 
 
 # ── Episode runners ────────────────────────────────────────────────────────
 
 async def run_easy(env: MedicalTriageEnv) -> None:
-    rewards: List[float] = []
-    steps_taken = 0
-    success = False
-    score = 0.0
-
-    log_start(task="easy", env=BENCHMARK, model=MODEL_NAME)
+    rewards, steps_taken, success, score = [], 0, False, 0.01
+    log_start("easy", BENCHMARK, MODEL_NAME)
     try:
         result = await env.reset(task="easy")
         obs = result.observation
         patient = obs.current_patient or {}
-
         for step in range(1, TASK_MAX_STEPS["easy"] + 1):
-            if result.done:
-                break
-            action_data = call_llm("easy", patient, [], {}, step)
-            action_data["task_type"] = "easy"
-            action = make_action(action_data)
-            result = await env.step(action)
+            if result.done: break
+            data = call_llm("easy", patient, obs)
+            data["task_type"] = "easy"
+            result = await env.step(make_action(data))
             obs = result.observation
-            reward = (result.reward if result.reward is not None
-                      else getattr(obs, "reward", 0.0) or 0.0)
-            done = result.done
-            safety = getattr(obs, "safety_flags", []) or []
-            rewards.append(reward)
-            steps_taken = step
-            log_step(step, action_label(action_data), reward, done, safety[0] if safety else None)
-            if done:
-                break
-
+            reward = result.reward if result.reward is not None else getattr(obs, "reward", 0.01) or 0.01
+            rewards.append(reward); steps_taken = step
+            log_step(step, action_label(data), reward, result.done,
+                     (getattr(obs, "safety_flags", None) or [None])[0])
+            if result.done: break
         score = compute_score("easy", rewards)
         success = score >= SUCCESS_THRESHOLD
     except Exception as e:
-        print(f"[DEBUG] easy error: {e}", file=sys.stderr)
+        print(f"[DEBUG] easy: {e}", file=sys.stderr)
     finally:
         log_end(success, steps_taken, score, rewards)
 
 
 async def run_medium(env: MedicalTriageEnv) -> None:
-    rewards: List[float] = []
-    steps_taken = 0
-    success = False
-    score = 0.0
-    ordered_so_far: List[str] = []
-
-    log_start(task="medium", env=BENCHMARK, model=MODEL_NAME)
+    rewards, steps_taken, success, score = [], 0, False, 0.01
+    log_start("medium", BENCHMARK, MODEL_NAME)
     try:
         result = await env.reset(task="medium")
         obs = result.observation
@@ -268,113 +247,77 @@ async def run_medium(env: MedicalTriageEnv) -> None:
         max_steps = TASK_MAX_STEPS["medium"]
 
         for step in range(1, max_steps + 1):
-            if result.done:
-                break
+            if result.done: break
 
-            # Force [] on the second-to-last step so F1 grader always runs.
-            # Medium never auto-terminates — only [] ends the episode.
-            # Reserve the last step for the [] signal so we don't exhaust steps
-            # without triggering the final score.
-            if step >= max_steps - 1:
-                action_data = {"task_type": "medium", "ordered_investigations": []}
+            # Reserve last step for [] signal
+            if step >= max_steps:
+                data = {"task_type": "medium", "ordered_investigations": []}
             else:
-                action_data = call_llm("medium", patient, ordered_so_far, {}, step)
-                action_data["task_type"] = "medium"
-                new = action_data.get("ordered_investigations") or []
-                ordered_so_far.extend(t for t in new if t not in ordered_so_far)
-                # If LLM already sent [], don't override — let it terminate early by design
-                if not new and action_data.get("ordered_investigations") == []:
-                    pass  # LLM chose to finalise early — allow it
+                data = call_llm("medium", patient, obs)
+                data["task_type"] = "medium"
+                # Enforce max 2 tests
+                if data.get("ordered_investigations"):
+                    data["ordered_investigations"] = data["ordered_investigations"][:2]
 
-            action = make_action(action_data)
-            result = await env.step(action)
+            result = await env.step(make_action(data))
             obs = result.observation
-            reward = (result.reward if result.reward is not None
-                      else getattr(obs, "reward", 0.0) or 0.0)
-            done = result.done
-            rewards.append(reward)
-            steps_taken = step
-            log_step(step, action_label(action_data), reward, done, None)
-            if done:
-                break
+            patient = obs.current_patient or patient
+            reward = result.reward if result.reward is not None else getattr(obs, "reward", 0.01) or 0.01
+            rewards.append(reward); steps_taken = step
+            log_step(step, action_label(data), reward, result.done, None)
+            if result.done: break
 
         score = compute_score("medium", rewards)
         success = score >= SUCCESS_THRESHOLD
     except Exception as e:
-        print(f"[DEBUG] medium error: {e}", file=sys.stderr)
+        print(f"[DEBUG] medium: {e}", file=sys.stderr)
     finally:
         log_end(success, steps_taken, score, rewards)
 
 
 async def run_hard(env: MedicalTriageEnv) -> None:
-    """
-    Hard task: multi-step.
-    Phase 1 (hard_investigate): order tests, send [] when ready.
-    Phase 2 (hard_discharge): final discharge decision with test evidence.
-    """
-    rewards: List[float] = []
-    steps_taken = 0
-    success = False
-    score = 0.0
-    ordered_so_far: List[str] = []
-    test_results: dict = {}
-    phase = "investigate"
-    max_steps = TASK_MAX_STEPS["hard"]
-
-    log_start(task="hard", env=BENCHMARK, model=MODEL_NAME)
+    rewards, steps_taken, success, score = [], 0, False, 0.01
+    log_start("hard", BENCHMARK, MODEL_NAME)
     try:
         result = await env.reset(task="hard")
         obs = result.observation
         patient = obs.current_patient or {}
+        phase = "investigate"
+        max_steps = TASK_MAX_STEPS["hard"]
 
         for step in range(1, max_steps + 1):
-            if result.done:
-                break
+            if result.done: break
 
-            # Determine current phase from observation
-            phase = (patient.get("hard_phase") or phase)
+            phase = patient.get("hard_phase", phase)
 
             if phase == "investigate":
+                task_type = "hard_investigate"
                 # Force transition on second-to-last step
-                if step >= max_steps - 2 and not result.done:
-                    action_data = {"task_type": "hard_investigate",
-                                   "ordered_investigations": []}
+                if step >= max_steps - 2:
+                    data = {"task_type": task_type, "ordered_investigations": []}
                 else:
-                    action_data = call_llm("hard_investigate", patient,
-                                           ordered_so_far, test_results, step)
-                    action_data["task_type"] = "hard_investigate"
-                    new = action_data.get("ordered_investigations") or []
-                    ordered_so_far.extend(t for t in new if t not in ordered_so_far)
+                    data = call_llm(task_type, patient, obs)
+                    data["task_type"] = task_type
+                    if data.get("ordered_investigations"):
+                        data["ordered_investigations"] = data["ordered_investigations"][:2]
+            else:
+                task_type = "hard_discharge"
+                data = call_llm(task_type, patient, obs)
+                data["task_type"] = task_type
 
-            else:  # discharge phase
-                action_data = call_llm("hard_discharge", patient,
-                                       ordered_so_far, test_results, step)
-                action_data["task_type"] = "hard_discharge"
-
-            action = make_action(action_data)
-            result = await env.step(action)
+            result = await env.step(make_action(data))
             obs = result.observation
-            reward = (result.reward if result.reward is not None
-                      else getattr(obs, "reward", 0.0) or 0.0)
-            done = result.done
-            safety = getattr(obs, "safety_flags", []) or []
-
-            # Update local state from new observation
             patient = obs.current_patient or patient
-            new_results = patient.get("test_results", {})
-            test_results.update(new_results)
-
-            rewards.append(reward)
-            steps_taken = step
-            log_step(step, action_label(action_data), reward, done,
-                     safety[0] if safety else None)
-            if done:
-                break
+            reward = result.reward if result.reward is not None else getattr(obs, "reward", 0.01) or 0.01
+            safety = getattr(obs, "safety_flags", []) or []
+            rewards.append(reward); steps_taken = step
+            log_step(step, action_label(data), reward, result.done, safety[0] if safety else None)
+            if result.done: break
 
         score = compute_score("hard", rewards)
         success = score >= SUCCESS_THRESHOLD
     except Exception as e:
-        print(f"[DEBUG] hard error: {e}", file=sys.stderr)
+        print(f"[DEBUG] hard: {e}", file=sys.stderr)
         import traceback; traceback.print_exc(file=sys.stderr)
     finally:
         log_end(success, steps_taken, score, rewards)
@@ -382,20 +325,16 @@ async def run_hard(env: MedicalTriageEnv) -> None:
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
-async def main() -> None:
-    # Each task gets its own connection
+async def main():
     async with MedicalTriageEnv(base_url=BASE_URL) as env:
         await run_easy(env)
     print("", flush=True)
-
     async with MedicalTriageEnv(base_url=BASE_URL) as env:
         await run_medium(env)
     print("", flush=True)
-
     async with MedicalTriageEnv(base_url=BASE_URL) as env:
         await run_hard(env)
     print("", flush=True)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
