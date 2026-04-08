@@ -27,18 +27,65 @@ def list_tasks():
     return {
         "tasks": ["easy", "medium", "hard"],
         "task_descriptions": {
-            "easy":   "Triage Prioritization — assign urgency 1/2/3.",
-            "medium": "Investigation Ordering — select diagnostic tests (multi-step).",
-            "hard":   "Full Discharge Decision — diagnosis, disposition, meds, follow-up.",
+            "easy": (
+                "Triage Prioritization — single step. "
+                "Assign urgency 1 (Immediate), 2 (Urgent), or 3 (Non-urgent)."
+            ),
+            "medium": (
+                "Investigation Ordering — multi-step. Order diagnostic tests "
+                "(max 2/step) with lab delays and prerequisites. "
+                "Send ordered_investigations=[] to finalise."
+            ),
+            "hard": (
+                "Full Clinical Workup + Discharge — two-phase multi-step. "
+                "Phase 1: use task_type='hard_investigate' to order tests. "
+                "Phase 2: use task_type='hard_discharge' for final discharge plan."
+            ),
         },
         "action_schema": {
-            "task_type":              "string: easy | medium | hard",
-            "urgency_assignment":     "int 1-3 (easy only)",
-            "ordered_investigations": "list[str] (medium only; pass [] to finish)",
-            "diagnosis":              "str (hard only)",
-            "disposition":            "str: admit | discharge (hard only)",
-            "prescribed_medications": "list[str] (hard only)",
-            "follow_up_days":         "int (hard only)",
+            "easy": {
+                "task_type": "easy",
+                "urgency_assignment": "int: 1=Immediate | 2=Urgent | 3=Non-urgent",
+            },
+            "medium_ordering_step": {
+                "task_type": "medium",
+                "ordered_investigations": "list[str] — max 2 tests per step",
+            },
+            "medium_finalise": {
+                "task_type": "medium",
+                "ordered_investigations": "[] — triggers F1 grader and ends episode",
+            },
+            "hard_phase1_investigate": {
+                "task_type": "hard_investigate",
+                "ordered_investigations": "list[str] — max 2 tests per step",
+            },
+            "hard_phase1_finalise": {
+                "task_type": "hard_investigate",
+                "ordered_investigations": "[] — transitions to discharge phase",
+            },
+            "hard_phase2_discharge": {
+                "task_type": "hard_discharge",
+                "diagnosis": "str — primary diagnosis",
+                "disposition": "str: admit | discharge",
+                "prescribed_medications": "list[str] — medication names",
+                "follow_up_days": "int — days until follow-up appointment",
+            },
+        },
+        "mechanics": {
+            "Option_B_prerequisites": (
+                "Some tests require prerequisite tests first. "
+                "locked_investigations in observation shows what is blocked and why."
+            ),
+            "Option_C_expanding_info": (
+                "Order physical_exam to reveal hidden patient history and exam findings. "
+                "Starts hidden, progressively revealed."
+            ),
+            "Option_D_lab_delays": (
+                "Rapid tests (ecg, blood_glucose, physical_exam, xrays): 1 step delay. "
+                "Standard tests (cbc, troponin, electrolytes, urinalysis...): 2 steps. "
+                "Slow tests (ct_head, ct_abdomen, ultrasound, lp, blood_culture): 3 steps. "
+                "pending_results in observation shows steps remaining per test."
+            ),
         },
     }
 
@@ -103,7 +150,7 @@ triaging patients, ordering diagnostic tests, and making discharge decisions.</p
 <tr><th>Task</th><th>Difficulty</th><th>Steps</th><th>Reward</th></tr>
 <tr><td>Triage Prioritization</td><td>Easy</td><td>1</td><td>0.0 / 0.5 / 1.0</td></tr>
 <tr><td>Investigation Ordering</td><td>Medium</td><td>Multi-step</td><td>0.0–1.0 partial</td></tr>
-<tr><td>Discharge Planning</td><td>Hard</td><td>1</td><td>0.0–1.0 composite</td></tr>
+<tr><td>Full Workup + Discharge</td><td>Hard</td><td>Multi-step (investigate → decide)</td><td>0.01–0.99 (inv 0.3 + discharge 0.7)</td></tr>
 </table>
 
 <h2>📋 How to Use the Web UI</h2>
@@ -124,7 +171,14 @@ urinalysis, blood_culture, lactate, bnp, inr, electrolytes, rapid_strep,
 xray_ankle, xray_leg, blood_glucose, bhcg, lumbar_puncture, endoscopy</code></p>
 
 <h3>Task 3 — Hard: Discharge Decision</h3>
-<pre>{"task_type": "hard",
+<pre>// Phase 1 — order tests (repeat 2-3 times as results arrive):
+{"task_type": "hard_investigate", "ordered_investigations": ["ecg", "physical_exam"]}
+
+// Phase 1 — signal done investigating:
+{"task_type": "hard_investigate", "ordered_investigations": []}
+
+// Phase 2 — discharge decision:
+{"task_type": "hard_discharge",
  "diagnosis": "acute myocardial infarction",
  "disposition": "admit",
  "prescribed_medications": ["aspirin", "nitroglycerin"],

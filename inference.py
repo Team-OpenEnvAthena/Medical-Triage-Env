@@ -9,6 +9,7 @@ Handles Options B+C+D mechanics:
   - Orders physical_exam early to reveal hidden history (Option C)
 """
 import asyncio, json, os, sys, textwrap
+import yaml
 from typing import Dict, List, Optional
 from openai import OpenAI
 from client import MedicalTriageEnv
@@ -16,8 +17,19 @@ from models import TriageAction
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file
 
+def _load_max_steps() -> Dict[str, int]:
+    """Read max_steps from openenv.yaml — single source of truth."""
+    yaml_path = os.path.join(os.path.dirname(__file__), "openenv.yaml")
+    try:
+        with open(yaml_path) as f:
+            spec = yaml.safe_load(f)
+        return {t["name"]: t["max_steps"] for t in spec.get("tasks", [])}
+    except Exception as e:
+        print(f"[WARN] Could not read openenv.yaml: {e}", file=sys.stderr)
+        return {"easy": 3, "medium": 8, "hard": 12}
+
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-72B-Instruct")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "Qwen/Qwen2.5-Coder-32B-Instruct")
 HF_TOKEN     = os.getenv("HF_TOKEN", "")
 BASE_URL     = os.getenv("BASE_URL", "https://ishakhatana17-medical-triage-env.hf.space")
 BENCHMARK    = "medical_triage_env"
@@ -27,7 +39,7 @@ if not HF_TOKEN:
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-TASK_MAX_STEPS    = {"easy": 3, "medium": 8, "hard": 12}
+TASK_MAX_STEPS = _load_max_steps()   # sourced from openenv.yaml
 SUCCESS_THRESHOLD = 0.3
 TEMPERATURE       = 0.1
 
@@ -107,47 +119,66 @@ def build_prompt(task_type: str, patient: dict, obs) -> str:
     elif task_type == "hard_discharge":
         phase_hint = "\nPhase: DISCHARGE DECISION — all results available, make your final plan."
 
+    ordered_so_far = patient.get("ordered_tests") or []
+    do_not_order = ", ".join(ordered_so_far) if ordered_so_far else "none"
+
     return textwrap.dedent(f"""
     Task: {task_type}{phase_hint}
     Patient: {patient.get('age')}yo {patient.get('sex')} | ID: {patient.get('id')}
     Complaint: {patient.get('chief_complaint')}
     Vitals: {vitals}
     History: {history}
-    Additional exam findings: {extra_str}
+    Additional exam findings:
+{extra_str}
     Allergies: {', '.join(patient.get('allergies') or []) or 'None'}
+
+    ══ DO NOT RE-ORDER — already submitted to lab (pending or done) ══
+    {do_not_order}
+    ════════════════════════════════════════════════════════════════
 
     Results arrived:
 {results_str}
 
-    Pending results: {pending_str}
-    Available to order: {', '.join(available[:15]) or 'none'}
-    Locked (prerequisite needed): {locked_str}
+    Pending (in lab, not yet returned): {pending_str}
+    Available to order NOW: {', '.join(available[:15]) or 'none'}
+    Locked (need prerequisite first): {locked_str}
 
-    Ordered so far: {', '.join(patient.get('ordered_tests') or []) or 'none'}
-
-    Respond with ONLY a JSON action. Remember: max 2 tests per step.
+    Respond with ONLY a JSON action. Max 2 tests. Never repeat already-ordered tests.
     """).strip()
 
 
-def call_llm(task_type: str, patient: dict, obs) -> dict:
+def _call_llm_once(task_type: str, patient: dict, obs) -> dict:
     user_msg = build_prompt(task_type, patient, obs)
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": user_msg},
-            ],
-            temperature=TEMPERATURE, max_tokens=400,
-        )
-        raw = (resp.choices[0].message.content or "").strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"): raw = raw[4:]
-        return json.loads(raw.strip())
-    except Exception as e:
-        print(f"[DEBUG] LLM error: {e}", file=sys.stderr)
-        return _safe_default(task_type, patient, obs)
+    resp = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": user_msg},
+        ],
+        temperature=TEMPERATURE, max_tokens=400,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"): raw = raw[4:]
+    return json.loads(raw.strip())
+
+
+def call_llm(task_type: str, patient: dict, obs) -> dict:
+    """Call LLM with up to 2 retries. Validates urgency_assignment for easy task."""
+    for attempt in range(3):
+        try:
+            result = _call_llm_once(task_type, patient, obs)
+            # Validate easy task — urgency must be 1, 2, or 3
+            if task_type == "easy":
+                urgency = result.get("urgency_assignment")
+                if urgency not in (1, 2, 3):
+                    print(f"[DEBUG] easy: urgency={urgency} invalid, retry {attempt+1}", file=sys.stderr)
+                    continue
+            return result
+        except Exception as e:
+            print(f"[DEBUG] LLM error attempt {attempt+1}: {e}", file=sys.stderr)
+    return _safe_default(task_type, patient, obs)
 
 
 def _safe_default(task_type: str, patient: dict, obs) -> dict:
@@ -204,8 +235,26 @@ def action_label(data: dict) -> str:
     return f"unknown({t})"
 
 def compute_score(task_name: str, rewards: List[float]) -> float:
-    if not rewards: return 0.01
-    raw = rewards[-1] if task_name == "medium" else sum(rewards) if task_name == "hard" else rewards[-1]
+    """
+    Compute episode score clamped to [0.01, 0.99].
+
+    easy:   single step → rewards[-1]
+    medium: final F1 at [] step → rewards[-1]
+    hard:   discharge reward (0.7 weight) + capped investigation contribution (0.3 weight).
+            Investigation partial rewards are summed and capped at 0.3 so that
+            wasted investigation steps cannot inflate the overall score.
+            Score = min(sum(inv_rewards), 0.3) + discharge_reward
+    """
+    if not rewards:
+        return 0.01
+    if task_name == "hard" and len(rewards) >= 2:
+        # Last reward is always the discharge step (done=True)
+        discharge_reward = rewards[-1]
+        inv_rewards = rewards[:-1]
+        inv_contribution = min(sum(inv_rewards), 0.3)   # capped at 0.3
+        raw = inv_contribution + discharge_reward
+    else:
+        raw = rewards[-1]
     return round(max(0.01, min(0.99, raw)), 4)
 
 

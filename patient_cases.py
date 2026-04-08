@@ -135,7 +135,7 @@ PATIENT_CASES = [
         required_investigations=["ct_head", "lumbar_puncture"],
         test_turnaround=turnaround(["ct_head", "lumbar_puncture", "cbc", "electrolytes"]),
         correct_disposition="admit",
-        safe_medications=["nimodipine", "pain_control"],
+        safe_medications=["nimodipine", "morphine", "labetalol"],
     ),
 
     PatientCase(
@@ -177,7 +177,7 @@ PATIENT_CASES = [
         required_investigations=["ct_head", "cbc", "inr"],
         test_turnaround=turnaround(["ct_head", "cbc", "inr", "electrolytes"]),
         correct_disposition="admit",
-        safe_medications=["aspirin", "tpa_if_eligible"],
+        safe_medications=["aspirin", "alteplase", "heparin"],
     ),
 
     PatientCase(
@@ -199,7 +199,7 @@ PATIENT_CASES = [
         required_investigations=["bhcg", "cbc", "ultrasound"],
         test_turnaround=turnaround(["bhcg", "cbc", "ultrasound"]),
         correct_disposition="admit",
-        safe_medications=["pain_control", "possible_surgery"],
+        safe_medications=["morphine", "methotrexate", "ondansetron"],
     ),
 
     PatientCase(
@@ -266,7 +266,7 @@ PATIENT_CASES = [
         required_investigations=["xray_leg", "compartment_pressure", "cbc"],
         test_turnaround=turnaround(["xray_leg", "compartment_pressure", "cbc", "lactate"]),
         correct_disposition="admit",
-        safe_medications=["morphine", "immediate_surgery"],
+        safe_medications=["morphine", "ketorolac", "tetanus_toxoid"],
     ),
 
     # ── URGENT (Urgency 2) ────────────────────────────────────────────────
@@ -335,7 +335,7 @@ PATIENT_CASES = [
         required_investigations=["urinalysis", "urine_culture", "cbc"],
         test_turnaround=turnaround(["urinalysis", "urine_culture", "cbc", "blood_culture"]),
         correct_disposition="admit",
-        safe_medications=["ciprofloxacin", "pain_control"],
+        safe_medications=["ciprofloxacin", "ibuprofen", "ondansetron"],
     ),
 
     PatientCase(
@@ -357,7 +357,7 @@ PATIENT_CASES = [
         required_investigations=["cbc", "inr"],
         test_turnaround=turnaround(["cbc", "inr"]),
         correct_disposition="discharge",
-        safe_medications=["local_anesthetic", "tetanus", "antibiotics_if_dirty"],
+        safe_medications=["lidocaine", "tetanus_toxoid", "amoxicillin_clavulanate"],
     ),
 
     PatientCase(
@@ -402,7 +402,7 @@ PATIENT_CASES = [
         required_investigations=["physical_exam", "ct_head", "cbc"],
         test_turnaround=turnaround(["physical_exam", "ct_head", "cbc"]),
         correct_disposition="discharge",
-        safe_medications=["acetaminophen", "concussion_precautions"],
+        safe_medications=["acetaminophen", "ibuprofen", "ondansetron"],
     ),
 
     PatientCase(
@@ -471,7 +471,7 @@ PATIENT_CASES = [
         required_investigations=["ecg", "electrolytes", "inr"],
         test_turnaround=turnaround(["ecg", "electrolytes", "inr"]),
         correct_disposition="admit",
-        safe_medications=["hold_beta_blocker", "possible_pacing"],
+        safe_medications=["atropine", "glucagon", "isoproterenol"],
     ),
 
     PatientCase(
@@ -493,7 +493,7 @@ PATIENT_CASES = [
         required_investigations=["cbc", "blood_culture"],
         test_turnaround=turnaround(["cbc", "blood_culture", "electrolytes"]),
         correct_disposition="admit",
-        safe_medications=["cephalexin", "elevation", "follow_up_48h"],
+        safe_medications=["cephalexin", "ibuprofen", "metformin"],
     ),
 
     # ── NON-URGENT (Urgency 3) ────────────────────────────────────────────
@@ -517,7 +517,7 @@ PATIENT_CASES = [
         required_investigations=["rapid_strep", "cbc"],
         test_turnaround=turnaround(["rapid_strep", "cbc"]),
         correct_disposition="discharge",
-        safe_medications=["acetaminophen", "throat_lozenges", "antibiotics_if_strep"],
+        safe_medications=["acetaminophen", "amoxicillin", "ibuprofen"],
     ),
 
     PatientCase(
@@ -539,7 +539,7 @@ PATIENT_CASES = [
         required_investigations=["physical_exam", "xray_ankle", "cbc"],
         test_turnaround=turnaround(["physical_exam", "xray_ankle", "cbc"]),
         correct_disposition="discharge",
-        safe_medications=["ibuprofen", "rice_protocol"],
+        safe_medications=["ibuprofen", "naproxen", "acetaminophen"],
     ),
 
     PatientCase(
@@ -716,7 +716,7 @@ PATIENT_CASES = [
         required_investigations=["physical_exam", "cbc", "urinalysis"],
         test_turnaround=turnaround(["physical_exam", "cbc", "urinalysis"]),
         correct_disposition="discharge",
-        safe_medications=["symptomatic_treatment", "rest", "fluids"],
+        safe_medications=["acetaminophen", "guaifenesin", "loratadine"],
     ),
 ]
 

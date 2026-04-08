@@ -72,7 +72,9 @@ class MedicalTriageEnv(EnvClient[TriageAction, TriageObservation, TriageState]):
         observation = TriageObservation(
             current_patient=obs_data.get("current_patient"),
             available_investigations=obs_data.get("available_investigations", []),
+            locked_investigations=obs_data.get("locked_investigations", {}),   # Option B
             investigation_results=obs_data.get("investigation_results"),
+            pending_results=obs_data.get("pending_results", {}),               # Option D
             task_instruction=obs_data.get("task_instruction", ""),
             partial_score=obs_data.get("partial_score", 0.0),
             safety_flags=obs_data.get("safety_flags", []),

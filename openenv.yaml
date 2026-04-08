@@ -13,16 +13,35 @@ tags:
 tasks:
   - name: easy
     difficulty: easy
-    description: "Triage prioritization: assign urgency level 1/2/3 to a patient."
+    description: >
+      Triage Prioritization: assign urgency level 1 (Immediate), 2 (Urgent),
+      or 3 (Non-urgent) to a patient based on chief complaint and vitals.
+      Single-step episode. Reward: 0.99 exact, 0.50 one tier off, 0.01 two tiers off.
     max_steps: 3
-    reward_range: [0.0, 1.0]
+    reward_range: [0.01, 0.99]
+
   - name: medium
     difficulty: medium
-    description: "Investigation ordering: select appropriate diagnostic tests."
-    max_steps: 5
-    reward_range: [0.0, 1.0]
+    description: >
+      Investigation Ordering: select appropriate diagnostic tests across multiple
+      steps. Options B+C+D active — tests have prerequisites, results arrive with
+      realistic lab delays (rapid=1 step, standard=2, slow=3), and ordering
+      physical_exam reveals hidden patient history. Max 2 tests per step.
+      Send ordered_investigations=[] to finalise and receive F1 grader score.
+      Reward is partial per step then final F1 (precision+recall of required tests
+      minus waste penalty).
+    max_steps: 8
+    reward_range: [0.01, 0.99]
+
   - name: hard
     difficulty: hard
-    description: "Multi-step: investigate (hard_investigate) then decide (hard_discharge). Reward = investigation quality (0.3) + discharge quality (0.7)."
-    max_steps: 10
-    reward_range: [0.0, 1.0]
+    description: >
+      Full Clinical Workup + Discharge Decision: two-phase multi-step episode.
+      Phase 1 (hard_investigate): order diagnostic tests with prerequisites,
+      delays, and hidden information — same mechanics as medium.
+      Phase 2 (hard_discharge): issue final discharge plan (diagnosis, disposition,
+      medications, follow-up) informed by test results.
+      Total reward = investigation quality (0.3 weight) + discharge quality (0.7 weight).
+      Safety penalty of -0.5 applies for discharging an urgency-1 patient.
+    max_steps: 12
+    reward_range: [0.01, 0.99]

@@ -413,7 +413,9 @@ class MedicalTriageEnvironment(Environment):
         if precision + recall == 0:
             return 0.01
         f1 = 2 * precision * recall / (precision + recall)
-        waste_penalty = len(ordered - required) * 0.1
+        # Waste penalty 0.05/extra test — same as step-level penalty for consistency.
+        # A model that ordered 5 extras but all required tests: F1=1.0 - 0.25 = 0.75
+        waste_penalty = len(ordered - required) * 0.05
         return _clamp(f1 - waste_penalty)
 
     # ── Hard: Phase 1 — investigate ────────────────────────────────────────
@@ -430,21 +432,26 @@ class MedicalTriageEnvironment(Environment):
             return _clamp(inv_score * 0.3), False   # 0.3 weight; not done — need discharge
 
         available, _ = self._available_tests()
+        already_ordered = set(self._ordered_tests)
+        already_pending = set(self._pending.keys())
         requested = action.ordered_investigations[:self.MAX_TESTS_PER_STEP]
 
         blocked_count = 0
+        duplicate_count = 0
         for test in requested:
-            if test in available:
+            if test in already_ordered or test in already_pending:
+                duplicate_count += 1   # already in lab — penalise re-ordering
+            elif test in available:
                 self._queue_test(test)
             else:
-                blocked_count += 1
+                blocked_count += 1     # prerequisite not met
 
         required = set(self._patient.required_investigations)
         ordered_set = set(self._ordered_tests)
         covered = required & ordered_set
         partial = len(covered) / max(len(required), 1)
         waste = len([t for t in ordered_set if t not in required])
-        penalty = waste * 0.05 + blocked_count * 0.02
+        penalty = waste * 0.05 + blocked_count * 0.02 + duplicate_count * 0.05
 
         return _clamp(partial * 0.3 - penalty), False
 
@@ -454,14 +461,60 @@ class MedicalTriageEnvironment(Environment):
         discharge_score = 0.0
 
         # 1. Diagnosis (0.3 of discharge weight)
+        # Fuzzy keyword match: split true_diagnosis into words (len>=3),
+        # count how many appear anywhere in the agent's diagnosis string.
+        # Synonyms map common clinical abbreviations to the keywords used.
+        # Bidirectional synonym map: clinical term → list of accepted alternatives
+        # Covers abbreviations, layperson terms, and partial matches
+        DIAGNOSIS_SYNONYMS = {
+            # Abbreviations
+            "uti": ["urinary", "infection"],
+            "mi": ["myocardial", "infarction", "stemi", "nstemi"],
+            "cva": ["stroke", "ischemic"],
+            "sob": ["pulmonary", "respiratory"],
+            "gi": ["gastrointestinal", "bleed"],
+            "tbi": ["traumatic", "brain"],
+            # Layperson → clinical
+            "heart attack": ["myocardial", "infarction"],
+            "stroke": ["ischemic", "stroke"],
+            "blood clot": ["thrombosis", "embolism"],
+            "burst appendix": ["perforated", "appendicitis"],
+            "brain bleed": ["hemorrhage", "subarachnoid"],
+            # Clinical abbreviation expansions
+            "stemi": ["myocardial", "infarction"],
+            "nstemi": ["myocardial", "infarction"],
+            "afib": ["atrial", "fibrillation"],
+            "dvt": ["deep", "venous", "thrombosis"],
+            "pe": ["pulmonary", "embolism"],
+            "sah": ["subarachnoid", "hemorrhage"],
+            "gi bleed": ["gastrointestinal", "bleed", "haemorrhage"],
+            # British/American spelling
+            "haemorrhage": ["hemorrhage"],
+            # Common layperson → clinical (additional)
+            "brain bleed": ["subarachnoid", "hemorrhage"],
+            "urinary tract infection": ["uncomplicated", "urinary"],
+            "water infection": ["urinary", "uncomplicated"],
+            "kidney infection": ["pyelonephritis"],
+            "heart failure": ["pulmonary", "edema"],
+            "irregular heartbeat": ["atrial", "fibrillation"],
+            "blood infection": ["sepsis"],
+            "stomach ulcer": ["gastrointestinal", "bleed"],
+            "oesophageal": ["esophageal"],
+            "anaemia": ["anemia"],
+        }
         if action.diagnosis:
             agent_dx = action.diagnosis.lower().replace("_", " ").replace("-", " ")
             true_dx  = self._patient.true_diagnosis.lower().replace("_", " ")
-            keywords = [w for w in true_dx.split() if len(w) > 3]
+            # Expand agent_dx with synonym alternatives
+            agent_expanded = agent_dx
+            for term, expansions in DIAGNOSIS_SYNONYMS.items():
+                if term in agent_dx:
+                    agent_expanded += " " + " ".join(expansions)
+            keywords = [w for w in true_dx.split() if len(w) >= 3]
             if keywords:
-                hits = sum(1 for kw in keywords if kw in agent_dx)
+                hits = sum(1 for kw in keywords if kw in agent_expanded)
                 discharge_score += 0.3 * (hits / len(keywords))
-            elif agent_dx == true_dx:
+            elif agent_expanded.strip() == true_dx.strip():
                 discharge_score += 0.3
 
         # 2. Disposition (0.3)
